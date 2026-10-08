@@ -1,9 +1,9 @@
-### <img src="./stream-tester-vanilla.svg" alt="Stream Tester Vanilla Logo" title="Stream Tester Vanilla" width="24" height="24" style="vertical-align: middle;" /> Stream Tester
+### <img src="./streamly.svg" alt="Streamly Logo" title="Streamly" width="24" height="24" style="vertical-align: middle;" /> Streamly
 A simple hls and dash video tester build with vanilla js. Star the repo so others can find it.
 
-[![Deployment](https://github.com/sanjeev-pandey23/vanilla-stream-tester/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/sanjeev-pandey23/vanilla-stream-tester/actions/workflows/pages/pages-build-deployment)
+[![Deployment](https://github.com/sanjeev-pandey23/streamly/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/sanjeev-pandey23/streamly/actions/workflows/pages/pages-build-deployment)
 
-![Tool Screenshot](./stream_tester_screenshot.png "Stream Tester")
+![Tool Screenshot](./stream_tester_screenshot.png "Streamly")
 
 #### Supports
 ___
