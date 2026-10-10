@@ -53,6 +53,10 @@ const manifestViewerEl = document.getElementById("manifestViewer");
 const respHeadersEl = document.getElementById("respHeaders");
 const copyManifestBtn = document.getElementById("copyManifestBtn");
 const waterfallCanvas = document.getElementById("waterfallCanvas");
+const statStartup = document.getElementById("statStartup");
+const statRebufferRatio = document.getElementById("statRebufferRatio");
+const networkSummaryEl = document.getElementById("networkSummary");
+const exportBtn = document.getElementById("exportBtn");
 
 let hlsPlayer = null;
 let dashPlayer = null;
@@ -79,6 +83,37 @@ const maxHistory = 60;
 const observedTextTracks = new WeakSet();
 const loadedTextTracks = new WeakSet();
 
+// --- Startup timing ---
+let playStartedAt = null;   // performance.now() when play was initiated
+let firstFrameShown = false;
+let startupMs = null;       // ms from play intent to first frame
+
+// --- Watch time / rebuffer ratio ---
+let watchStartedAt = null;  // performance.now() when playing began (after startup)
+let totalWatchMs = 0;       // accumulated watch time (excluding stalls)
+
+// --- Stored network requests for summary + export ---
+const networkRequests = [];
+const maxNetworkRequests = 500;
+
+// --- TTFB refinement from Resource Timing API ---
+const pendingTtfb = new Map(); // url -> { req, startedAt }
+try {
+  new PerformanceObserver((list) => {
+    list.getEntries().forEach((e) => {
+      if (e.initiatorType !== "fetch" && e.initiatorType !== "xmlhttprequest") return;
+      const rec = pendingTtfb.get(e.name);
+      if (!rec) return;
+      pendingTtfb.delete(e.name);
+      if (e.responseStart > 0) {
+        rec.req.ttfbMs = Math.round(e.responseStart - e.startTime);
+      }
+      if (e.nextHopProtocol) rec.req.protocol = e.nextHopProtocol;
+      if (e.transferSize === 0 && e.decodedBodySize > 0) rec.req.cached = true;
+    });
+  }).observe({ type: "resource", buffered: false });
+} catch (_) {}
+
 const log = (level, message) => {
   const entry = document.createElement("div");
   entry.className = "log-entry";
@@ -103,6 +138,14 @@ const formatDuration = (ms) => {
   return `${Math.round(ms)}ms`;
 };
 
+const recordNetworkRequest = (req) => {
+  networkRequests.push(req);
+  if (networkRequests.length > maxNetworkRequests) networkRequests.shift();
+  renderNetworkSummary();
+};
+
+const hostOf = (url) => { try { return new URL(url).host; } catch (_) { return url; } };
+
 const setupNetworkLogging = () => {
   if (window.__networkLogsInstalled) return;
   window.__networkLogsInstalled = true;
@@ -118,11 +161,19 @@ const setupNetworkLogging = () => {
       const isSegment = SEG_RE.test(url);
       const segRelStart = isSegment && waterfallSessionStart !== null
         ? startedAt - waterfallSessionStart : null;
+      const req = { url, method, host: hostOf(url), startedAt, ttfbMs: null, totalMs: null, status: null, ok: null, via: "fetch" };
+      try { pendingTtfb.set(url, { req, startedAt }); } catch (_) {}
       return originalFetch(input, init)
         .then((response) => {
           const elapsed = performance.now() - startedAt;
+          req.totalMs = Math.round(elapsed);
+          req.status = response.status;
+          req.ok = response.ok;
+          pendingTtfb.delete(url);
+          recordNetworkRequest(req);
           if (window.__networkLogsEnabled) {
-            log("info", `NET ${method} ${url} -> ${response.status} (${formatDuration(elapsed)})`);
+            const ttfbPart = req.ttfbMs != null ? ` TTFB:${req.ttfbMs}ms` : "";
+            log("info", `NET ${method} ${url} -> ${response.status} (${formatDuration(elapsed)}${ttfbPart})`);
           }
           if (isSegment && segRelStart !== null) {
             const size = parseInt(response.headers.get("content-length") || "0", 10) || 0;
@@ -132,6 +183,10 @@ const setupNetworkLogging = () => {
         })
         .catch((error) => {
           const elapsed = performance.now() - startedAt;
+          req.totalMs = Math.round(elapsed);
+          req.ok = false;
+          pendingTtfb.delete(url);
+          recordNetworkRequest(req);
           if (window.__networkLogsEnabled) {
             log("error", `NET ${method} ${url} failed (${formatDuration(elapsed)})`);
           }
@@ -155,14 +210,22 @@ const setupNetworkLogging = () => {
     const segRelStart = isSegment && waterfallSessionStart !== null
       ? startedAt - waterfallSessionStart
       : null;
+    const req = { url, method, host: hostOf(url), startedAt, ttfbMs: null, totalMs: null, status: null, ok: null, via: "xhr" };
+    try { pendingTtfb.set(url, { req, startedAt }); } catch (_) {}
 
     const logResult = () => {
       const elapsed = performance.now() - startedAt;
+      req.totalMs = Math.round(elapsed);
+      req.status = this.status || 0;
+      req.ok = this.status >= 200 && this.status < 400;
+      pendingTtfb.delete(url);
+      recordNetworkRequest(req);
       if (window.__networkLogsEnabled) {
         const status = this.status || 0;
         const level = status >= 400 ? "error" : "info";
         const suffix = status ? `-> ${status}` : "-> (no status)";
-        log(level, `NET ${method} ${url} ${suffix} (${formatDuration(elapsed)})`);
+        const ttfbPart = req.ttfbMs != null ? ` TTFB:${req.ttfbMs}ms` : "";
+        log(level, `NET ${method} ${url} ${suffix} (${formatDuration(elapsed)}${ttfbPart})`);
       }
       if (isSegment && segRelStart !== null) {
         let size = 0;
@@ -175,8 +238,12 @@ const setupNetworkLogging = () => {
     this.addEventListener(
       "error",
       () => {
-        if (!window.__networkLogsEnabled) return;
         const elapsed = performance.now() - startedAt;
+        req.totalMs = Math.round(elapsed);
+        req.ok = false;
+        pendingTtfb.delete(url);
+        recordNetworkRequest(req);
+        if (!window.__networkLogsEnabled) return;
         log("error", `NET ${method} ${url} failed (${formatDuration(elapsed)})`);
       },
       { once: true }
@@ -612,6 +679,9 @@ const resetStats = () => {
   bitrateValue.textContent = "-";
   if (statStalls) statStalls.textContent = "-";
   if (statStallTime) statStallTime.textContent = "-";
+  if (statStartup) statStartup.textContent = "-";
+  if (statRebufferRatio) statRebufferRatio.textContent = "-";
+  if (networkSummaryEl) networkSummaryEl.innerHTML = "";
   setSelectOptions(qualitySelect, []);
   setSelectOptions(audioSelect, []);
   updateTextTrackInfo([]);
@@ -655,6 +725,13 @@ const cleanupPlayers = () => {
   dashRepresentations = [];
   qualitySwitches.length = 0;
   segmentWaterfall.length = 0;
+  networkRequests.length = 0;
+  playStartedAt = null;
+  firstFrameShown = false;
+  startupMs = null;
+  watchStartedAt = null;
+  totalWatchMs = 0;
+  pendingTtfb.clear();
   video.removeAttribute("src");
   video.load();
   if (statsTimer) {
@@ -1229,6 +1306,15 @@ const handlePlay = () => {
     return;
   }
 
+  // Reset startup tracking for this play session
+  playStartedAt = performance.now();
+  firstFrameShown = false;
+  startupMs = null;
+  watchStartedAt = null;
+  totalWatchMs = 0;
+  if (statStartup) statStartup.textContent = "-";
+  if (statRebufferRatio) statRebufferRatio.textContent = "-";
+
   video.autoplay = autoplayToggle.checked;
   video.muted = mutedToggle.checked;
   video.loop = loopToggle.checked;
@@ -1419,6 +1505,19 @@ const updateStats = () => {
   if (statStalls) statStalls.textContent = String(stallCount);
   if (statStallTime) statStallTime.textContent = totalStallMs > 0 ? `${formatNumber(totalStallMs / 1000)}s` : "0s";
 
+  // Rebuffer ratio
+  if (statRebufferRatio) {
+    const currentWatchMs = totalWatchMs + (watchStartedAt !== null ? performance.now() - watchStartedAt : 0);
+    const currentStallMs = totalStallMs + (stallStartedAt !== null ? performance.now() - stallStartedAt : 0);
+    const total = currentWatchMs + currentStallMs;
+    if (total > 0) {
+      const ratio = (currentStallMs / total) * 100;
+      statRebufferRatio.textContent = `${ratio.toFixed(1)}%`;
+    } else {
+      statRebufferRatio.textContent = "-";
+    }
+  }
+
   const live = detectLive();
   if (live) {
     liveBadge.classList.remove("hidden");
@@ -1604,20 +1703,41 @@ video.addEventListener("loadedmetadata", () => {
 });
 
 video.addEventListener("playing", () => {
+  const now = performance.now();
   if (stallStartedAt !== null) {
-    totalStallMs += performance.now() - stallStartedAt;
+    totalStallMs += now - stallStartedAt;
     stallStartedAt = null;
   }
-  log("info", "Playback started.");
+  // Startup time: first frame shown
+  if (!firstFrameShown && playStartedAt !== null) {
+    firstFrameShown = true;
+    startupMs = Math.round(now - playStartedAt);
+    if (statStartup) statStartup.textContent = `${startupMs}ms`;
+    log("info", `Playback started. Startup: ${startupMs}ms`);
+  } else {
+    log("info", "Playback started.");
+  }
+  // Begin tracking watch time
+  if (watchStartedAt === null) watchStartedAt = now;
 });
 
 video.addEventListener("pause", () => {
+  // Accumulate watch time up to this pause
+  if (watchStartedAt !== null) {
+    totalWatchMs += performance.now() - watchStartedAt;
+    watchStartedAt = null;
+  }
   log("warn", "Playback paused.");
 });
 
 video.addEventListener("waiting", () => {
   stallCount += 1;
   stallStartedAt = performance.now();
+  // Accumulate watch time up to this stall
+  if (watchStartedAt !== null) {
+    totalWatchMs += performance.now() - watchStartedAt;
+    watchStartedAt = null;
+  }
   log("warn", "Buffering...");
 });
 
@@ -1782,6 +1902,94 @@ if (copyManifestBtn) {
       log("info", "Manifest copied to clipboard.");
     }).catch(() => {});
   });
+}
+
+// --- Per-host network summary ---
+function renderNetworkSummary() {
+  if (!networkSummaryEl) return;
+  if (!networkRequests.length) {
+    networkSummaryEl.innerHTML = "<p class='summary-empty'>No requests recorded yet.</p>";
+    return;
+  }
+  const byHost = {};
+  networkRequests.forEach((r) => {
+    const h = r.host || "unknown";
+    if (!byHost[h]) byHost[h] = { count: 0, ok: 0, fail: 0, ttfbs: [], totals: [] };
+    const s = byHost[h];
+    s.count++;
+    if (r.ok) s.ok++; else s.fail++;
+    if (r.ttfbMs != null) s.ttfbs.push(r.ttfbMs);
+    if (r.totalMs != null) s.totals.push(r.totalMs);
+  });
+  const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+  const rows = Object.entries(byHost)
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([host, s]) => {
+      const ttfbAvg = avg(s.ttfbs);
+      const totalAvg = avg(s.totals);
+      return `<tr>
+        <td class="summary-host">${host}</td>
+        <td>${s.count}</td>
+        <td class="${s.fail > 0 ? "summary-fail" : "summary-ok"}">${s.ok}/${s.count}</td>
+        <td>${ttfbAvg != null ? ttfbAvg + "ms" : "-"}</td>
+        <td>${totalAvg != null ? totalAvg + "ms" : "-"}</td>
+      </tr>`;
+    }).join("");
+  networkSummaryEl.innerHTML = `
+    <table class="summary-table">
+      <thead><tr><th>Host</th><th>Reqs</th><th>OK</th><th>TTFB avg</th><th>Total avg</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// --- Export JSON report ---
+const exportReport = () => {
+  const now = new Date();
+  const currentWatchMs = totalWatchMs + (watchStartedAt !== null ? performance.now() - watchStartedAt : 0);
+  const currentStallMs = totalStallMs + (stallStartedAt !== null ? performance.now() - stallStartedAt : 0);
+  const report = {
+    tool: "streamly",
+    generatedAt: now.toISOString(),
+    page: location.href,
+    userAgent: navigator.userAgent,
+    session: {
+      streamUrl: urlInput.value.trim() || null,
+      streamType: streamTypeSelect.value,
+      startupMs: startupMs,
+      watchMs: Math.round(currentWatchMs),
+      stallMs: Math.round(currentStallMs),
+      stallCount,
+      rebufferRatio: (currentWatchMs + currentStallMs) > 0
+        ? parseFloat(((currentStallMs / (currentWatchMs + currentStallMs)) * 100).toFixed(2))
+        : 0,
+    },
+    stats: {
+      resolution: statResolution ? statResolution.textContent : null,
+      buffer: statBuffer ? statBuffer.textContent : null,
+      bitrate: statBitrate ? statBitrate.textContent : null,
+      droppedFrames: statDropped ? statDropped.textContent : null,
+      latency: statLatency ? statLatency.textContent : null,
+    },
+    qualitySwitches,
+    networkRequests: networkRequests.map(({ url, method, host, ttfbMs, totalMs, status, ok, via }) =>
+      ({ url, method, host, ttfbMs, totalMs, status, ok, via })
+    ),
+    manifest: manifestViewerEl ? manifestViewerEl.textContent : null,
+    responseHeaders: respHeadersEl ? respHeadersEl.textContent : null,
+  };
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `streamly-report-${now.toISOString().replace(/[:.]/g, "-")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  log("info", "Session report exported as JSON.");
+};
+
+if (exportBtn) {
+  exportBtn.addEventListener("click", exportReport);
 }
 
 restoreFromUrl();
