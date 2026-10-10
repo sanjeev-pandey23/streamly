@@ -123,6 +123,14 @@
               <div class="stat-label">Stall Time</div>
               <div id="statStallTime" class="stat-value">-</div>
             </div>
+            <div class="stat-card">
+              <div class="stat-label">Startup</div>
+              <div id="statStartup" class="stat-value">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Rebuffer %</div>
+              <div id="statRebufferRatio" class="stat-value">-</div>
+            </div>
           </div>
 
           <div class="graphs">
@@ -153,6 +161,14 @@
             <div class="logs-header">Important Logs</div>
             <div id="logWindow" class="log-window" role="log" aria-live="polite"></div>
           </div>
+
+          <details class="detail-panel" id="networkSummaryPanel">
+            <summary class="detail-summary">
+              <span>Network Summary (per host)</span>
+              <span class="graph-value dim">tap to expand</span>
+            </summary>
+            <div id="networkSummary" class="network-summary"></div>
+          </details>
 
           <details class="detail-panel" id="switchesPanel">
             <summary class="detail-summary">
@@ -326,6 +342,7 @@
             <button id="playBtn">Play</button>
             <button id="stopBtn" class="secondary">Stop</button>
             <button id="shareBtn" class="secondary" type="button">Share</button>
+            <button id="exportBtn" class="secondary" type="button">Export JSON</button>
           </div>
 
           <div class="note">

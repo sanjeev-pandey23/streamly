@@ -750,3 +750,49 @@ canvas {
   box-shadow: none;
   letter-spacing: 0.5px;
 }
+/* ── Network summary table ── */
+
+.network-summary {
+  padding: 8px 10px 12px;
+}
+
+.summary-empty {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 4px 0;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 3px 6px;
+  border-bottom: 2px solid var(--border);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.summary-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.summary-table td.summary-host {
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: 10px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-table td.summary-ok { color: var(--good); }
+.summary-table td.summary-fail { color: var(--bad); }

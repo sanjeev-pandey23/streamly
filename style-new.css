@@ -764,6 +764,52 @@ canvas {
   line-height: 1.6;
 }
 
+/* ── Network summary table ── */
+
+.network-summary {
+  padding: 8px 14px 12px;
+}
+
+.summary-empty {
+  color: var(--text-3);
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-table th {
+  text-align: left;
+  color: var(--text-3);
+  font-weight: 500;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--separator);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.summary-table td.summary-host {
+  color: var(--text);
+  font-family: "SF Mono", "Menlo", "Courier New", monospace;
+  font-size: 11px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-table td.summary-ok { color: var(--green); }
+.summary-table td.summary-fail { color: var(--red); }
+
 /* ── Waterfall ── */
 
 .waterfall-card { grid-column: 1 / -1; }
